@@ -1,5 +1,8 @@
 # Changelog
 
+## [1.14.0-beta.11] - 2020-06-17
+*no changes*
+
 ## [1.14.0-beta.10] - 2020-05-21
 ### Added
 - preliminary support for Windows and Mac 10.15 for `ouster_viz` and

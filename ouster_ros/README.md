@@ -28,13 +28,18 @@
       building the ROS nodes
 * To publish ROS topics from a running sensor from within the `ouster_ros` directory:
     - Run `roslaunch ouster.launch sensor_hostname:=<sensor_hostname>
-     udp_dest:=<udp_data_dest_ip> lidar_mode:=<lidar_mode> viz:=<viz>`where:
+      udp_dest:=<udp_data_dest_ip> lidar_mode:=<lidar_mode> viz:=<viz>`where:
         - `<sensor_hostname>` can be the hostname (os-991xxxxxxxxx) or IP of the sensor
         - `<udp_data_dest_ip>` is the IP to which the sensor should send data
         - `<lidar_mode>` is one of `512x10`, `512x20`, `1024x10`, `1024x20`, or `2048x10`
         - `<viz>` is either `true` or `false`. If true, a window should open and start
           displaying data after a few seconds
     - See [ouster_viz](../ouster_viz/README.md) for documentation on using the visualizer
+* **To display sensor output using the Ouster Visualizer in ROS:**
+    - set `<viz>` to `true` in the roslaunch command.
+    - Example command:
+        - `roslaunch ouster.launch sensor_hostname:=os-991234567890.local
+          udp_dest:=192.0.2.1 lidar_mode:=2048x10 viz:=true`
 * To record raw sensor output
     - In another terminal instance, run `rosbag record /os_node/imu_packets
      /os_node/lidar_packets`
@@ -51,7 +56,7 @@
       1024x10. This can be overridden with the `lidar_mode`
       parameter. Visualizer output will only be correct if the same `lidar_mode`
       parameter is used for both recording and replay
-* To display sensor output using ROS tools (rviz):
+* To display sensor output using built-in ROS tools (rviz):
     - Follow the instructions above for running the example ROS code with a
       sensor or recorded data
     - To visualize output using rviz, run `rviz -d /path/to/ouster_ros/viz.rviz`
