@@ -15,6 +15,8 @@ See the `README.md` in each subdirectory for details.
 * [cartographer_ros/](cartographer_ros/) contains example Cartographer ROS configuration files for doing SLAM with an Ouster sensor
 * **NOTE:** Please ignore the CMakeSettings.json files as they are specific to windows
 
-## Sample Data
-* Sample sensor output usable with the provided ROS code is available
-  [here](https://data.ouster.io/sample-data-1.13)
+## Wiki
+
+* Sample sensor output usable with the provided ROS code & Wiki is available
+  [here](https://wiki.oslidar.net)
+
