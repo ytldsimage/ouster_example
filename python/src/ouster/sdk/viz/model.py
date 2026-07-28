@@ -1056,15 +1056,34 @@ class LidarFrameVizModel:
         except ValueError:
             self._image_mode_ind[0] = 0
 
-        # Set modes for ALL panels (not just first 2)
-        # Assign each available mode to a panel in order
+        # Set modes for ALL panels in preferred order
+        # 1:NIR 2:Signal 3:CalRef 4:Range 5:RGB 6:R 7:G 8:B 9:MIX_4 10:MIX_5
+        preferred_order = [
+            ChanField.NEAR_IR,       # panel 0
+            ChanField.SIGNAL,        # panel 1
+            ChanField.REFLECTIVITY,  # panel 2
+            ChanField.RANGE,         # panel 3
+            "RGB",                   # panel 4
+            ChanField.R,             # panel 5 (Rev8 only)
+            ChanField.G,             # panel 6 (Rev8 only)
+            ChanField.B,             # panel 7 (Rev8 only)
+            "MIXED_LIGHT",           # panel 8
+            "MIXED_LIGHT_SIG",       # panel 9
+        ]
         self._cloud_mode_name = sorted_cloud_mode_names[self._cloud_mode_ind]
+        sorted_set = set(sorted_image_mode_names)
         for i in range(self._max_images):
-            if i < len(sorted_image_mode_names):
+            assigned = False
+            if i < len(preferred_order):
+                preferred = preferred_order[i]
+                if preferred in sorted_set:
+                    self._image_mode_names[i] = preferred
+                    self._image_mode_ind[i] = sorted_image_mode_names.index(preferred)
+                    assigned = True
+            if not assigned:
+                # Fallback: cycle through available modes
                 self._image_mode_ind[i] = i % len(sorted_image_mode_names)
-            else:
-                self._image_mode_ind[i] = 0
-            self._image_mode_names[i] = sorted_image_mode_names[self._image_mode_ind[i]]
+                self._image_mode_names[i] = sorted_image_mode_names[self._image_mode_ind[i]]
         self.update_cloud_palettes()
 
     def update_objects_for_list(self, key: str, object_list):
