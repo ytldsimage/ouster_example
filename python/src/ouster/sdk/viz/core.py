@@ -240,6 +240,9 @@ class LidarFrameViz:
             [self._viz.add(image) for image in sensor._images]
             [self._viz.add(cloud) for cloud in sensor._clouds]
             self._viz.add(sensor._object_overlay)
+            # Add per-panel channel labels
+            for lbl in self._model._panel_labels:
+                self._viz.add(lbl)
 
         self._images_layout = LidarFrameViz.ImagesLayout.HORIZONTAL
 
@@ -433,6 +436,23 @@ class LidarFrameViz:
             (ord('B'), 1): partial(LidarFrameViz.cycle_img_mode, i=0, direction=-1),
             (ord('N'), 0): partial(LidarFrameViz.cycle_img_mode, i=1, direction=+1),
             (ord('N'), 1): partial(LidarFrameViz.cycle_img_mode, i=1, direction=-1),
+            # Extended image panel keys for 10-channel display (panels 2-9)
+            (ord('G'), 0): partial(LidarFrameViz.cycle_img_mode, i=2, direction=+1),
+            (ord('G'), 1): partial(LidarFrameViz.cycle_img_mode, i=2, direction=-1),
+            (ord('R'), 1): partial(LidarFrameViz.cycle_img_mode, i=3, direction=+1),
+            (ord('T'), 1): partial(LidarFrameViz.cycle_img_mode, i=3, direction=-1),
+            (ord('J'), 2): partial(LidarFrameViz.cycle_img_mode, i=4, direction=+1),
+            (ord('K'), 2): partial(LidarFrameViz.cycle_img_mode, i=4, direction=-1),
+            (ord('L'), 2): partial(LidarFrameViz.cycle_img_mode, i=5, direction=+1),
+            (ord(';'), 2): partial(LidarFrameViz.cycle_img_mode, i=5, direction=-1),
+            (ord('Z'), 2): partial(LidarFrameViz.cycle_img_mode, i=6, direction=+1),
+            (ord('X'), 2): partial(LidarFrameViz.cycle_img_mode, i=6, direction=-1),
+            (ord('A'), 2): partial(LidarFrameViz.cycle_img_mode, i=7, direction=+1),
+            (ord('D'), 2): partial(LidarFrameViz.cycle_img_mode, i=7, direction=-1),
+            (ord('Q'), 2): partial(LidarFrameViz.cycle_img_mode, i=8, direction=+1),
+            (ord('E'), 2): partial(LidarFrameViz.cycle_img_mode, i=8, direction=-1),
+            (ord('W'), 2): partial(LidarFrameViz.cycle_img_mode, i=9, direction=+1),
+            (ord('S'), 0): partial(LidarFrameViz.cycle_img_mode, i=9, direction=-1),
             (ord('M'), 0): partial(LidarFrameViz.cycle_cloud_mode, direction=+1),
             (ord('M'), 1): partial(LidarFrameViz.cycle_cloud_mode, direction=-1),
             (ord('F'), 0): partial(LidarFrameViz.cycle_cloud_palette, direction=+1),
@@ -478,8 +498,16 @@ class LidarFrameViz:
             "CTRL+- / CTRL+=": "Increase/decrease field of view (perspective only)",
             "1": "Toggle first return point cloud",
             "2": "Toggle second return point cloud",
-            "b": "Cycle top 2D image",
-            "n": "Cycle bottom 2D image",
+            "b / SHIFT+b": "Cycle image panel 0 (R)",
+            "n / SHIFT+n": "Cycle image panel 1 (G)",
+            "g / SHIFT+g": "Cycle image panel 2 (B)",
+            "SHIFT+r / SHIFT+t": "Cycle image panel 3 (RGB)",
+            "CTRL+j / CTRL+k": "Cycle image panel 4 (NIR)",
+            "CTRL+l / CTRL+;": "Cycle image panel 5 (SIG)",
+            "CTRL+z / CTRL+x": "Cycle image panel 6 (REF)",
+            "CTRL+a / CTRL+d": "Cycle image panel 7 (DEPTH)",
+            "CTRL+q / CTRL+e": "Cycle image panel 8 (MIX_4)",
+            "CTRL+w / S": "Cycle image panel 9 (MIX_5)",
             'm': "Cycle through point cloud coloring mode",
             'f': "Cycle through point cloud color palette",
             'c': "Cycle current highlight mode",
@@ -993,12 +1021,15 @@ class LidarFrameViz:
         cloud_states_str = ", ".join(
             ["ON" if e else "OFF" for e in self._model._cloud_enabled])
 
-        img_keys = 'B, N'
+        _panel_keys = ['b', 'n', 'g', 'SHIFT+r', 'CTRL+j', 'CTRL+l', 'CTRL+z', 'CTRL+a', 'CTRL+q', 'CTRL+w']
+        img_modes = ', '.join(
+            f"{k}:{self._model._image_mode_names[i]}"
+            for i, k in enumerate(_panel_keys)
+            if i < len(self._model._image_mode_names)
+        )
         cld_keys = 'M'
-        img_modes = self._model._image_mode_names[0]
-        img_modes += ", " + self._model._image_mode_names[1]
         cld_modes = self._model._cloud_mode_name
-        osd_str += f"image [{img_keys}]: {img_modes}\n" \
+        osd_str += f"image: {img_modes}\n" \
             f"cloud {cloud_idxs_str}: {cloud_states_str}\n" \
             f"        cloud mode [{cld_keys}]: {cld_modes}\n" \
             f"        palette [F]: {self._model._cloud_palette_name}\n" \
@@ -1414,7 +1445,7 @@ class SimpleViz:
                  *,
                  rate: Optional[float] = None,
                  pause_at: int = -1,
-                 on_eof: str = 'exit',
+                 on_eof: str = 'loop',
                  accum_max_num: int = 0,
                  accum_min_dist_meters: float = 0,
                  accum_min_dist_num: int = 1,

@@ -542,6 +542,72 @@ class ReflMode(SimpleMode, ImageCloudMode):
         return refl_data
 
 
+class MixedLightMode(SimpleMode):
+    """Mixed light mode: average of R, G, B, NIR channels (4-channel composite).
+
+    Only available on Rev8 sensors with native color (R/G/B fields).
+    """
+
+    def __init__(self, *, info: Optional[core.SensorInfo] = None) -> None:
+        super().__init__("MIXED_LIGHT", info=info, use_ae=True, use_buc=False)
+
+    def _prepare_data(self,
+                      ls: core.LidarFrame,
+                      return_num: int = 0) -> Optional[np.ndarray]:
+        if not self.enabled(ls, return_num):
+            return None
+        r = ls.field(core.ChanField.R).astype(np.float32)
+        g = ls.field(core.ChanField.G).astype(np.float32)
+        b = ls.field(core.ChanField.B).astype(np.float32)
+        nir = ls.field(core.ChanField.NEAR_IR).astype(np.float32)
+        key_data = (r + g + b + nir) / 4.0
+        if self._buc:
+            self._buc.update(key_data)
+        if self._ae:
+            self._ae.update(key_data, update_state=(return_num == 0))
+        return key_data
+
+    def enabled(self, ls: core.LidarFrame, return_num: int = 0) -> bool:
+        return (ls.has_field(core.ChanField.R)
+                and ls.has_field(core.ChanField.G)
+                and ls.has_field(core.ChanField.B)
+                and ls.has_field(core.ChanField.NEAR_IR))
+
+
+class MixedLightSigMode(SimpleMode):
+    """Mixed light + signal mode: average of R, G, B, NIR, SIGNAL channels (5-channel composite).
+
+    Only available on Rev8 sensors with native color (R/G/B fields).
+    """
+
+    def __init__(self, *, info: Optional[core.SensorInfo] = None) -> None:
+        super().__init__("MIXED_LIGHT_SIG", info=info, use_ae=True, use_buc=False)
+
+    def _prepare_data(self,
+                      ls: core.LidarFrame,
+                      return_num: int = 0) -> Optional[np.ndarray]:
+        if not self.enabled(ls, return_num):
+            return None
+        r = ls.field(core.ChanField.R).astype(np.float32)
+        g = ls.field(core.ChanField.G).astype(np.float32)
+        b = ls.field(core.ChanField.B).astype(np.float32)
+        nir = ls.field(core.ChanField.NEAR_IR).astype(np.float32)
+        sig = ls.field(core.ChanField.SIGNAL).astype(np.float32)
+        key_data = (r + g + b + nir + sig) / 5.0
+        if self._buc:
+            self._buc.update(key_data)
+        if self._ae:
+            self._ae.update(key_data, update_state=(return_num == 0))
+        return key_data
+
+    def enabled(self, ls: core.LidarFrame, return_num: int = 0) -> bool:
+        return (ls.has_field(core.ChanField.R)
+                and ls.has_field(core.ChanField.G)
+                and ls.has_field(core.ChanField.B)
+                and ls.has_field(core.ChanField.NEAR_IR)
+                and ls.has_field(core.ChanField.SIGNAL))
+
+
 def is_norm_reflectivity_mode(mode: FieldViewMode) -> bool:
     """Checks whether the image/cloud mode is a normalized REFLECTIVITY mode
     """

@@ -17,7 +17,7 @@ from typing import Any, Callable, Dict, List, Optional, Set, Tuple
 from .view_mode import (ImageMode, CloudMode, LidarFrameVizMode,
                         SimpleMode, ReflMode, RGBMode,
                         HDRRGBMode,
-                        NormalsMode, RingMode, TimestampMode,
+                        NormalsMode, RingMode, TimestampMode, MixedLightMode, MixedLightSigMode,
                         is_norm_reflectivity_mode, CloudPaletteItem, SensorMode)
 from ouster.sdk._bindings.viz import (Cloud, Image, Label, PointViz, Mesh, Cuboid,
                    ObjectOverlay,
@@ -367,7 +367,7 @@ class SensorModel:
 
         self._palette_dirty = [True] * len(self._clouds)
 
-        self._num_images = 2
+        self._num_images = 10
         self._images: List[Image] = []
         self._image_modes: Dict[str, ImgModeItem] = {}
         for i in range(self._num_images):
@@ -390,6 +390,10 @@ class SensorModel:
         if index is not None:
             self._color = _colors[index % len(_colors)]
             self._modes.append(SensorMode(meta, self._color))
+
+        # Mixed-light composite modes (Rev8 native color only)
+        self._modes.append(MixedLightMode(info=meta))
+        self._modes.append(MixedLightSigMode(info=meta))
 
         # TODO[tws] decide whether it's necessary to provide extra modes via the constructor
         # self._modes.extend(_ext_modes or [])
@@ -845,11 +849,17 @@ class LidarFrameVizModel:
 
         # regrettable, since images aren't always aware of the context they're rendered in
         self._ctx: Optional[WindowCtx] = None
-        self._img_size_fraction = 4
+        self._img_size_fraction = 12
 
         self._flip_images = False
         self._show_one_image = False
         self._objects_selected = False
+
+        # Per-panel channel labels (positioned in update_image_size)
+        self._panel_labels: List[Label] = [Label("", 0, 0) for _ in range(self._max_images)]
+        for lbl in self._panel_labels:
+            lbl.set_scale(0.5)
+            lbl.set_rgba((1.0, 1.0, 0.0, 1.0))  # yellow text
 
         self._move_queue: LifoQueue[Optional[Tuple]] = LifoQueue()
         self._queue_idx = 0
@@ -1046,8 +1056,14 @@ class LidarFrameVizModel:
         except ValueError:
             self._image_mode_ind[0] = 0
 
+        # Set modes for ALL panels (not just first 2)
+        # Assign each available mode to a panel in order
         self._cloud_mode_name = sorted_cloud_mode_names[self._cloud_mode_ind]
-        for i in range(2):
+        for i in range(self._max_images):
+            if i < len(sorted_image_mode_names):
+                self._image_mode_ind[i] = i % len(sorted_image_mode_names)
+            else:
+                self._image_mode_ind[i] = 0
             self._image_mode_names[i] = sorted_image_mode_names[self._image_mode_ind[i]]
         self.update_cloud_palettes()
 
@@ -1170,6 +1186,11 @@ class LidarFrameVizModel:
         for frame, sensor in zip(frames, self._sensors):
             sensor.update_clouds(self._cloud_mode_name, frame)
             sensor.update_images(self._image_mode_names, frame)
+
+            # Update panel labels with current mode names
+            for i, lbl in enumerate(self._panel_labels):
+                if i < len(self._image_mode_names) and self._image_mode_names[i]:
+                    lbl.set_text(f"  {i}:{self._image_mode_names[i]}")
 
             if frame:
                 # TODO [tws] use midpoint pose?
@@ -1660,42 +1681,57 @@ class LidarFrameVizModel:
                                    (size_fraction_max + 1)) % (
                                        size_fraction_max + 1)
         enabled_sensors = [sensor for sensor in self._sensors if sensor._enabled]
-        image_h = self._img_size_fraction / size_fraction_max
 
-        # compute the total width
-        total_image_w = 0.0
         for sensor in enabled_sensors:
-            image_w = image_h / sensor._img_aspect_ratio
-            total_image_w += image_w
-
-        # set image positions
-        center_x = -total_image_w / 2
-        last_image_right = 0.0
-        for sensor in enabled_sensors:
-            image_w = image_h / sensor._img_aspect_ratio
-            image_left = last_image_right
-            image_right = last_image_right + image_w
-
-            last_image_right = image_right
-            if self._flip_images:
-                image_right, image_left = image_left, image_right
-            for image_idx, image in enumerate(sensor._images):
-                image_top = 1.0 - image_h * image_idx
-                image_bottom = 1.0 - image_h * (image_idx + 1)
+            n_imgs = len(sensor._images)
+            ar = sensor._img_aspect_ratio
+            if n_imgs > 4:
+                # Full-width vertical stack: each image spans [-1, 1] horizontally
+                nrows = n_imgs
+                cell_h = 2.0 / nrows
+                # scale images up to fill cell width, height determined by aspect ratio
+                for image_idx, image in enumerate(sensor._images):
+                    if self._show_one_image and image_idx > 0:
+                        image.set_position(1000, 0, 0, 0)
+                        continue
+                    y_top = 1.0 - image_idx * cell_h
+                    y_bottom = y_top - cell_h
+                    if self._flip_images:
+                        y_top, y_bottom = y_bottom, y_top
+                    image.set_position(-1.0, 1.0, y_bottom, y_top)
+                # overlay on first cell
+                sensor._object_overlay.set_position(-1.0, 1.0, 1.0 - cell_h, 1.0)
+            else:
+                image_h = self._img_size_fraction / size_fraction_max
+                image_w = image_h / ar
+                center_x = -image_w / 2
                 if self._flip_images:
-                    image_top, image_bottom = image_bottom, image_top
-                if self._show_one_image and image_idx > 0:
-                    image.set_position(1000, 0, 0, 0)
+                    center_x = image_w / 2
+                for image_idx, image in enumerate(sensor._images):
+                    image_top = 1.0 - image_h * image_idx
+                    image_bottom = 1.0 - image_h * (image_idx + 1)
+                    if self._flip_images:
+                        image_top, image_bottom = image_bottom, image_top
+                    if self._show_one_image and image_idx > 0:
+                        image.set_position(1000, 0, 0, 0)
+                    else:
+                        image.set_position(-image_w + center_x, image_w + center_x,
+                                           image_bottom, image_top)
+                    if image_idx == 0:
+                        sensor._object_overlay.set_position(
+                            -image_w + center_x, image_w + center_x,
+                            image_bottom, image_top)
+        # Position panel labels at top-left of each image
+        for i, lbl in enumerate(self._panel_labels):
+            if i < len(self._image_mode_names) and self._image_mode_names[i]:
+                lbl.set_text(f"  {i}:{self._image_mode_names[i]}")
+            if i < len(sensor._images):
+                if n_imgs > 4:
+                    y_top = 1.0 - i * cell_h
+                    lbl.set_position(-0.98, y_top - 0.01)
                 else:
-                    image.set_position(image_left + center_x, image_right + center_x, image_bottom, image_top)
-
-                if image_idx == 0:
-                    sensor._object_overlay.set_position(
-                        image_left + center_x,
-                        image_right + center_x,
-                        image_bottom,
-                        image_top
-                    )
+                    image_top = 1.0 - image_h * i
+                    lbl.set_position(-0.98, image_top - 0.01)
         self.update_aoi()
 
     def update_overlay_colors(self, palette):
