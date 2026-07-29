@@ -422,6 +422,15 @@ class LidarFrameViz:
                 sensor.update_clouds(self._model._cloud_mode_name, self._frame_set[idx])
             self._viz.update()
 
+    def cycle_panel_view_mode(self) -> None:
+        """Cycle panel visibility: ALL (0-9) → FIRST 5 (0-4) → LAST 5 (5-9) → ALL"""
+        with self._lock:
+            self._model.cycle_panel_view_mode()
+            mode_names = ['ALL (0-9)', 'FIRST 5 (0-4)', 'LAST 5 (5-9)']
+            self._viz.set_notification(f"Panels: {mode_names[self._model._panel_view_mode]}")
+            if len(self._frame_set) == len(self._model._sensors):
+                self._model.update(self._frame_set)
+
     def _setup_controls(self) -> None:
         # key bindings. will be called from rendering thread, must be synchronized
         key_bindings: Dict[Tuple[int, int], Callable[[LidarFrameViz], None]] = {
@@ -478,6 +487,7 @@ class LidarFrameViz:
             (ord('2'), 1): partial(LidarFrameViz.set_view, view='forward'),
             (ord('3'), 1): partial(LidarFrameViz.set_view, view='left'),
             (ord('S'), 2): LidarFrameViz.toggle_sky,
+            (ord('H'), 0): LidarFrameViz.cycle_panel_view_mode,
         }
 
         self._key_definitions: Dict[str, str] = {
@@ -508,6 +518,7 @@ class LidarFrameViz:
             "CTRL+a / CTRL+d": "Cycle image panel 7 (DEPTH)",
             "CTRL+q / CTRL+e": "Cycle image panel 8 (MIX_4)",
             "CTRL+w / S": "Cycle image panel 9 (MIX_5)",
+            "h": "Toggle panel view: ALL → FIRST 5 → LAST 5",
             'm': "Cycle through point cloud coloring mode",
             'f': "Cycle through point cloud color palette",
             'c': "Cycle current highlight mode",

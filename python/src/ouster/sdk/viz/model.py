@@ -18,6 +18,7 @@ from .view_mode import (ImageMode, CloudMode, LidarFrameVizMode,
                         SimpleMode, ReflMode, RGBMode,
                         HDRRGBMode,
                         NormalsMode, RingMode, TimestampMode, MixedLightMode, MixedLightSigMode,
+                        RedChannelMode, GreenChannelMode, BlueChannelMode,
                         is_norm_reflectivity_mode, CloudPaletteItem, SensorMode)
 from ouster.sdk._bindings.viz import (Cloud, Image, Label, PointViz, Mesh, Cuboid,
                    ObjectOverlay,
@@ -394,6 +395,10 @@ class SensorModel:
         # Mixed-light composite modes (Rev8 native color only)
         self._modes.append(MixedLightMode(info=meta))
         self._modes.append(MixedLightSigMode(info=meta))
+        # RGB single-channel extraction modes (for sensors with combined RGB field)
+        self._modes.append(RedChannelMode(info=meta))
+        self._modes.append(GreenChannelMode(info=meta))
+        self._modes.append(BlueChannelMode(info=meta))
 
         # TODO[tws] decide whether it's necessary to provide extra modes via the constructor
         # self._modes.extend(_ext_modes or [])
@@ -855,6 +860,9 @@ class LidarFrameVizModel:
         self._show_one_image = False
         self._objects_selected = False
 
+        # Panel view mode: ALL, FIRST_HALF (0-4), SECOND_HALF (5-9)
+        self._panel_view_mode = 0  # 0=ALL, 1=FIRST_HALF, 2=SECOND_HALF
+
         # Per-panel channel labels (positioned in update_image_size)
         self._panel_labels: List[Label] = [Label("", 0, 0) for _ in range(self._max_images)]
         for lbl in self._panel_labels:
@@ -1064,27 +1072,53 @@ class LidarFrameVizModel:
             ChanField.REFLECTIVITY,  # panel 2
             ChanField.RANGE,         # panel 3
             "RGB",                   # panel 4
-            ChanField.R,             # panel 5 (Rev8 only)
-            ChanField.G,             # panel 6 (Rev8 only)
-            ChanField.B,             # panel 7 (Rev8 only)
+            "R",                     # panel 5 (from RGB composite)
+            "G",                     # panel 6 (from RGB composite)
+            "B",                     # panel 7 (from RGB composite)
             "MIXED_LIGHT",           # panel 8
             "MIXED_LIGHT_SIG",       # panel 9
         ]
         self._cloud_mode_name = sorted_cloud_mode_names[self._cloud_mode_ind]
-        sorted_set = set(sorted_image_mode_names)
+        # Use ALL registered image modes (not just _known_fields filtered)
+        # because R/G/B/MIXED_LIGHT modes extract from RGB composite,
+        # so they're registered as modes but not in _known_fields
+        all_mode_names = sorted(self._sensors[0]._image_modes.keys()) if self._sensors else []
+        all_mode_set = set(all_mode_names)
         for i in range(self._max_images):
             assigned = False
             if i < len(preferred_order):
                 preferred = preferred_order[i]
-                if preferred in sorted_set:
+                if preferred in all_mode_set:
                     self._image_mode_names[i] = preferred
-                    self._image_mode_ind[i] = sorted_image_mode_names.index(preferred)
+                    # Find index in sorted_image_mode_names if available, else use all_mode_names
+                    if preferred in sorted_image_mode_names:
+                        self._image_mode_ind[i] = sorted_image_mode_names.index(preferred)
+                    else:
+                        self._image_mode_ind[i] = all_mode_names.index(preferred)
                     assigned = True
             if not assigned:
                 # Fallback: cycle through available modes
-                self._image_mode_ind[i] = i % len(sorted_image_mode_names)
-                self._image_mode_names[i] = sorted_image_mode_names[self._image_mode_ind[i]]
+                self._image_mode_ind[i] = i % len(all_mode_names)
+                self._image_mode_names[i] = all_mode_names[self._image_mode_ind[i]]
         self.update_cloud_palettes()
+
+        # Auto-detect color sensor → determine panel view mode
+        # has_native_rgb: separate R/G/B fields exist (Rev8 native color)
+        # has_rgb_composite: combined RGB field (R/G/B extracted from it)
+        # has_no_rgb: non-color sensor
+        has_native_rgb = (ChanField.R in all_mode_set and
+                          ChanField.G in all_mode_set and
+                          ChanField.B in all_mode_set)
+        has_rgb_composite = "RGB" in all_mode_set
+
+        if has_native_rgb or has_rgb_composite:
+            self._panel_view_mode = 0   # ALL 10 panels
+        else:
+            self._panel_view_mode = 1   # FIRST 5 only (no color at all)
+
+    def cycle_panel_view_mode(self) -> None:
+        """Cycle panel visibility: ALL (0-9) → FIRST_HALF (0-4) → SECOND_HALF (5-9) → ALL"""
+        self._panel_view_mode = (self._panel_view_mode + 1) % 3
 
     def update_objects_for_list(self, key: str, object_list):
         def cuboid_select_cb(lsv_weakref, viz_weakref, cuboid_weakref, selected_color, obj, lsvm_weakref, _) -> None:
@@ -1704,21 +1738,37 @@ class LidarFrameVizModel:
         for sensor in enabled_sensors:
             n_imgs = len(sensor._images)
             ar = sensor._img_aspect_ratio
+            # Determine which panels are visible based on _panel_view_mode
+            if self._panel_view_mode == 1:
+                visible_indices = list(range(min(5, n_imgs)))
+            elif self._panel_view_mode == 2:
+                visible_indices = list(range(5, min(10, n_imgs)))
+            else:
+                visible_indices = list(range(n_imgs))
+            n_visible = len(visible_indices)
+            if n_visible == 0:
+                n_visible = n_imgs
+                visible_indices = list(range(n_imgs))
+
             if n_imgs > 4:
-                # Full-width vertical stack: each image spans [-1, 1] horizontally
-                nrows = n_imgs
+                # Full-width vertical stack for visible panels
+                nrows = n_visible
                 cell_h = 2.0 / nrows
-                # scale images up to fill cell width, height determined by aspect ratio
-                for image_idx, image in enumerate(sensor._images):
-                    if self._show_one_image and image_idx > 0:
+                for vis_idx, image_idx in enumerate(visible_indices):
+                    image = sensor._images[image_idx]
+                    if self._show_one_image and vis_idx > 0:
                         image.set_position(1000, 0, 0, 0)
                         continue
-                    y_top = 1.0 - image_idx * cell_h
+                    y_top = 1.0 - vis_idx * cell_h
                     y_bottom = y_top - cell_h
                     if self._flip_images:
                         y_top, y_bottom = y_bottom, y_top
                     image.set_position(-1.0, 1.0, y_bottom, y_top)
-                # overlay on first cell
+                # Hide non-visible panels
+                for image_idx in range(n_imgs):
+                    if image_idx not in visible_indices:
+                        sensor._images[image_idx].set_position(1000, 0, 0, 0)
+                # overlay on first visible cell
                 sensor._object_overlay.set_position(-1.0, 1.0, 1.0 - cell_h, 1.0)
             else:
                 image_h = self._img_size_fraction / size_fraction_max
@@ -1726,20 +1776,24 @@ class LidarFrameVizModel:
                 center_x = -image_w / 2
                 if self._flip_images:
                     center_x = image_w / 2
-                for image_idx, image in enumerate(sensor._images):
-                    image_top = 1.0 - image_h * image_idx
-                    image_bottom = 1.0 - image_h * (image_idx + 1)
+                for vis_idx, image_idx in enumerate(visible_indices):
+                    image = sensor._images[image_idx]
+                    image_top = 1.0 - image_h * vis_idx
+                    image_bottom = 1.0 - image_h * (vis_idx + 1)
                     if self._flip_images:
                         image_top, image_bottom = image_bottom, image_top
-                    if self._show_one_image and image_idx > 0:
+                    if self._show_one_image and vis_idx > 0:
                         image.set_position(1000, 0, 0, 0)
                     else:
                         image.set_position(-image_w + center_x, image_w + center_x,
                                            image_bottom, image_top)
-                    if image_idx == 0:
+                    if vis_idx == 0:
                         sensor._object_overlay.set_position(
                             -image_w + center_x, image_w + center_x,
                             image_bottom, image_top)
+                for image_idx in range(n_imgs):
+                    if image_idx not in visible_indices:
+                        sensor._images[image_idx].set_position(1000, 0, 0, 0)
         # Position panel labels at top-left of each image
         for i, lbl in enumerate(self._panel_labels):
             if i < len(self._image_mode_names) and self._image_mode_names[i]:

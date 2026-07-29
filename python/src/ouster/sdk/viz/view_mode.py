@@ -545,21 +545,26 @@ class ReflMode(SimpleMode, ImageCloudMode):
 class MixedLightMode(SimpleMode):
     """Mixed light mode: average of R, G, B, NIR channels (4-channel composite).
 
-    Only available on Rev8 sensors with native color (R/G/B fields).
+    Works with both:
+    - Separate R/G/B fields (native Rev8)
+    - Combined RGB 3-channel field (OSF format)
     """
 
     def __init__(self, *, info: Optional[core.SensorInfo] = None) -> None:
         super().__init__("MIXED_LIGHT", info=info, use_ae=True, use_buc=False)
+
+    def _extract_rgb_channels(self, ls):
+        """Extract R, G, B arrays from available fields."""
+        rgb = ls.field("RGB").astype(np.float32)
+        return rgb[:, :, 0], rgb[:, :, 1], rgb[:, :, 2]
 
     def _prepare_data(self,
                       ls: core.LidarFrame,
                       return_num: int = 0) -> Optional[np.ndarray]:
         if not self.enabled(ls, return_num):
             return None
-        r = ls.field(core.ChanField.R).astype(np.float32)
-        g = ls.field(core.ChanField.G).astype(np.float32)
-        b = ls.field(core.ChanField.B).astype(np.float32)
         nir = ls.field(core.ChanField.NEAR_IR).astype(np.float32)
+        r, g, b = self._extract_rgb_channels(ls)
         key_data = (r + g + b + nir) / 4.0
         if self._buc:
             self._buc.update(key_data)
@@ -568,31 +573,38 @@ class MixedLightMode(SimpleMode):
         return key_data
 
     def enabled(self, ls: core.LidarFrame, return_num: int = 0) -> bool:
-        return (ls.has_field(core.ChanField.R)
-                and ls.has_field(core.ChanField.G)
-                and ls.has_field(core.ChanField.B)
-                and ls.has_field(core.ChanField.NEAR_IR))
+        # Work with either separate R/G/B or combined RGB
+        has_separate = (ls.has_field(core.ChanField.R) and
+                        ls.has_field(core.ChanField.G) and
+                        ls.has_field(core.ChanField.B))
+        has_composite = ls.has_field("RGB")
+        return (has_separate or has_composite) and ls.has_field(core.ChanField.NEAR_IR)
 
 
 class MixedLightSigMode(SimpleMode):
     """Mixed light + signal mode: average of R, G, B, NIR, SIGNAL channels (5-channel composite).
 
-    Only available on Rev8 sensors with native color (R/G/B fields).
+    Works with both:
+    - Separate R/G/B fields (native Rev8)
+    - Combined RGB 3-channel field (OSF format)
     """
 
     def __init__(self, *, info: Optional[core.SensorInfo] = None) -> None:
         super().__init__("MIXED_LIGHT_SIG", info=info, use_ae=True, use_buc=False)
+
+    def _extract_rgb_channels(self, ls):
+        """Extract R, G, B arrays from available fields."""
+        rgb = ls.field("RGB").astype(np.float32)
+        return rgb[:, :, 0], rgb[:, :, 1], rgb[:, :, 2]
 
     def _prepare_data(self,
                       ls: core.LidarFrame,
                       return_num: int = 0) -> Optional[np.ndarray]:
         if not self.enabled(ls, return_num):
             return None
-        r = ls.field(core.ChanField.R).astype(np.float32)
-        g = ls.field(core.ChanField.G).astype(np.float32)
-        b = ls.field(core.ChanField.B).astype(np.float32)
         nir = ls.field(core.ChanField.NEAR_IR).astype(np.float32)
         sig = ls.field(core.ChanField.SIGNAL).astype(np.float32)
+        r, g, b = self._extract_rgb_channels(ls)
         key_data = (r + g + b + nir + sig) / 5.0
         if self._buc:
             self._buc.update(key_data)
@@ -601,11 +613,67 @@ class MixedLightSigMode(SimpleMode):
         return key_data
 
     def enabled(self, ls: core.LidarFrame, return_num: int = 0) -> bool:
-        return (ls.has_field(core.ChanField.R)
-                and ls.has_field(core.ChanField.G)
-                and ls.has_field(core.ChanField.B)
-                and ls.has_field(core.ChanField.NEAR_IR)
-                and ls.has_field(core.ChanField.SIGNAL))
+        has_separate = (ls.has_field(core.ChanField.R) and
+                        ls.has_field(core.ChanField.G) and
+                        ls.has_field(core.ChanField.B))
+        has_composite = ls.has_field("RGB")
+        return (has_separate or has_composite) and \
+               ls.has_field(core.ChanField.NEAR_IR) and \
+               ls.has_field(core.ChanField.SIGNAL)
+
+
+class RGBChannelMode(SimpleMode):
+    """Extract a single channel (R/G/B) from the RGB 3-channel composite field.
+
+    For sensors where R/G/B are stored as part of a combined RGB field
+    rather than as separate ChanField entries.
+    """
+
+    def __init__(self, channel_name: str, channel_idx: int, *,
+                 info: Optional[core.SensorInfo] = None) -> None:
+        """
+        Args:
+            channel_name: display name ('R', 'G', or 'B')
+            channel_idx: index into RGB last dimension (0=R, 1=G, 2=B)
+            info: sensor metadata
+        """
+        super().__init__(channel_name, info=info, use_ae=True, use_buc=False)
+        self._channel_name = channel_name
+        self._channel_idx = channel_idx
+
+    def _prepare_data(self,
+                      ls: core.LidarFrame,
+                      return_num: int = 0) -> Optional[np.ndarray]:
+        if not self.enabled(ls, return_num):
+            return None
+        rgb = ls.field("RGB").astype(np.float32)
+        key_data = rgb[:, :, self._channel_idx].copy()
+        if self._buc:
+            self._buc.update(key_data)
+        if self._ae:
+            self._ae.update(key_data, update_state=(return_num == 0))
+        return key_data
+
+    def enabled(self, ls: core.LidarFrame, return_num: int = 0) -> bool:
+        return ls.has_field("RGB")
+
+
+class RedChannelMode(RGBChannelMode):
+    """Extract R channel from RGB composite."""
+    def __init__(self, *, info=None):
+        super().__init__("R", 0, info=info)
+
+
+class GreenChannelMode(RGBChannelMode):
+    """Extract G channel from RGB composite."""
+    def __init__(self, *, info=None):
+        super().__init__("G", 1, info=info)
+
+
+class BlueChannelMode(RGBChannelMode):
+    """Extract B channel from RGB composite."""
+    def __init__(self, *, info=None):
+        super().__init__("B", 2, info=info)
 
 
 def is_norm_reflectivity_mode(mode: FieldViewMode) -> bool:

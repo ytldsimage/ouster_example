@@ -89,18 +89,18 @@ lfv.run()
 
 | 面板 # | 默认通道 | 说明 | Rev8 专属 |
 |:------:|---------|------|:---------:|
-| 0 | NEAR_IR / R | 近红外（16-bit）/ 红色 | R 专属 |
-| 1 | RANGE / G | 深度距离（19-bit）/ 绿色 | G 专属 |
-| 2 | REFLECTIVITY / B | 校准反射率（8-bit）/ 蓝色 | B 专属 |
-| 3 | RGB | 合成彩色（48-bit） | ✅ |
-| 4 | SIGNAL | 信号强度（16-bit） | ❌ |
-| 5 | NEAR_IR | 近红外（16-bit） | ❌ |
-| 6 | RANGE | 深度距离（19-bit） | ❌ |
-| 7 | REFLECTIVITY | 校准反射率（8-bit） | ❌ |
+| 0 | NEAR_IR | 近红外（16-bit） | ❌ |
+| 1 | SIGNAL | 信号强度（16-bit） | ❌ |
+| 2 | REFLECTIVITY | 校准反射率（8-bit） | ❌ |
+| 3 | RANGE | 深度距离（19-bit） | ❌ |
+| 4 | RGB | 合成彩色（48-bit） | ✅ |
+| 5 | R | 红色（16-bit） | ✅ |
+| 6 | G | 绿色（16-bit） | ✅ |
+| 7 | B | 蓝色（16-bit） | ✅ |
 | 8 | MIX_4 | (R+G+B+NIR)/4 混光均值 | ✅ |
 | 9 | MIX_5 | (R+G+B+NIR+SIG)/5 混光均值 | ✅ |
 
-> **注意**：面板 0-2 的默认通道取决于传感器类型。Rev8 有 R/G/B 独立通道；非 Rev8 传感器回退到 NEAR_IR/RANGE/REFLECTIVITY。
+> **注意**：非 Rev8 传感器（无 R/G/B 通道）默认只显示前 5 个面板（NEAR_IR/SIGNAL/REFLECTIVITY/RANGE/RGB）。按 `h` 键切换前 5 / 后 5 / 全部。
 
 ---
 
@@ -317,6 +317,7 @@ for lbl in lfv._model._panel_labels:
 | `CTRL+a` / `CTRL+d` | 面板 7 向前/向后切换 |
 | `CTRL+q` / `CTRL+e` | 面板 8 向前/向后切换 |
 | `CTRL+w` / `s` | 面板 9 向前/向后切换 |
+| `h` | 切换面板视图: 全部(0-9) → 前5(0-4) → 后5(5-9) |
 | `I` / `SHIFT+I` | 放大/缩小图像 |
 | `CTRL+I` | 切换图像视图模式 |
 
