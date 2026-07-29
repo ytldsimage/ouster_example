@@ -634,6 +634,51 @@ class MixedLightSigMode(SimpleMode):
                ls.has_field(core.ChanField.SIGNAL)
 
 
+class MixedLightCalRefMode(SimpleMode):
+    """Mixed light + calibrated reflectivity: R+G+B+NIR+CalRef (5-channel normalized composite).
+
+    Each channel independently normalized to [0,1] before mixing.
+    CalRef (REFLECTIVITY) is already 8-bit calibrated, normalized to [0,1] via /255.
+    """
+
+    def __init__(self, *, info: Optional[core.SensorInfo] = None) -> None:
+        super().__init__("MIXED_LIGHT_CALREF", info=info, use_ae=True, use_buc=False)
+
+    def _extract_rgb_channels(self, ls):
+        rgb = ls.field("RGB").astype(np.float32)
+        return rgb[:, :, 0], rgb[:, :, 1], rgb[:, :, 2]
+
+    def _prepare_data(self,
+                      ls: core.LidarFrame,
+                      return_num: int = 0) -> Optional[np.ndarray]:
+        if not self.enabled(ls, return_num):
+            return None
+        nir = ls.field(core.ChanField.NEAR_IR).astype(np.float32)
+        calref = ls.field(core.ChanField.REFLECTIVITY).astype(np.float32)
+        r, g, b = self._extract_rgb_channels(ls)
+        # Normalize each channel to [0,1]
+        r_n = (r - r.min()) / (r.max() - r.min() + 1e-6)
+        g_n = (g - g.min()) / (g.max() - g.min() + 1e-6)
+        b_n = (b - b.min()) / (b.max() - b.min() + 1e-6)
+        nir_n = nir / 65535.0
+        calref_n = calref / 255.0
+        key_data = (r_n + g_n + b_n + nir_n + calref_n) / 5.0
+        if self._buc:
+            self._buc.update(key_data)
+        if self._ae:
+            self._ae.update(key_data, update_state=(return_num == 0))
+        return key_data
+
+    def enabled(self, ls: core.LidarFrame, return_num: int = 0) -> bool:
+        has_separate = (ls.has_field(core.ChanField.R) and
+                        ls.has_field(core.ChanField.G) and
+                        ls.has_field(core.ChanField.B))
+        has_composite = ls.has_field("RGB")
+        return (has_separate or has_composite) and \
+               ls.has_field(core.ChanField.NEAR_IR) and \
+               ls.has_field(core.ChanField.REFLECTIVITY)
+
+
 class RGBChannelMode(SimpleMode):
     """Extract a single channel (R/G/B) from the RGB 3-channel composite field.
 
