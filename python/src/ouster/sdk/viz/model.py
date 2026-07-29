@@ -1042,29 +1042,13 @@ class LidarFrameVizModel:
         if not sorted_image_mode_names or not sorted_cloud_mode_names:
             return
 
-        # Set the modes for image 1 and cloud
+        # Set cloud mode (prefer RGB if available)
         if "RGB" in sorted_image_mode_names:
-            # Always show RGB if present in image 1 and cloud
-            self._image_mode_ind[1] = sorted_image_mode_names.index("RGB")
             self._cloud_mode_ind = sorted_cloud_mode_names.index("RGB")
+        elif ChanField.REFLECTIVITY in sorted_cloud_mode_names:
+            self._cloud_mode_ind = sorted_cloud_mode_names.index(ChanField.REFLECTIVITY)
         else:
-            # Otherwise prefer REFLECTIVITY2 or NEAR_IR for image 1
-            # For cloud prefer REFLECTIVITY
-            preferred_field = ChanField.REFLECTIVITY2
-            if ChanField.REFLECTIVITY2 not in self._known_fields:
-                preferred_field = ChanField.NEAR_IR
-            try:
-                self._image_mode_ind[1] = sorted_image_mode_names.index(preferred_field)
-                self._cloud_mode_ind = sorted_cloud_mode_names.index(ChanField.REFLECTIVITY)
-            except ValueError:
-                self._image_mode_ind[1] = 0
-                self._cloud_mode_ind = 0
-
-        # Finally set the mode for image 0, which should be reflectivity
-        try:
-            self._image_mode_ind[0] = sorted_image_mode_names.index(ChanField.REFLECTIVITY)
-        except ValueError:
-            self._image_mode_ind[0] = 0
+            self._cloud_mode_ind = 0
 
         # Set modes for ALL panels in preferred order
         # 1:NIR 2:Signal 3:CalRef 4:Range 5:RGB 6:R 7:G 8:B 9:MIX_4 10:MIX_5
@@ -1745,7 +1729,7 @@ class LidarFrameVizModel:
             if self._panel_view_mode == 1:
                 visible_indices = list(range(min(5, n_imgs)))
             elif self._panel_view_mode == 2:
-                visible_indices = list(range(5, min(10, n_imgs)))
+                visible_indices = list(range(5, n_imgs))
             else:
                 visible_indices = list(range(n_imgs))
             n_visible = len(visible_indices)
