@@ -100,7 +100,7 @@ lfv.run()
 | 8 | MIX_4 | (R+G+B+NIR)/4 混光均值 | ✅ |
 | 9 | MIX_5 | (R+G+B+NIR+SIG)/5 混光均值 | ✅ |
 
-> **注意**：非 Rev8 传感器（无 R/G/B 通道）默认只显示前 5 个面板（NEAR_IR/SIGNAL/REFLECTIVITY/RANGE/RGB）。按 `h` 键切换前 5 / 后 5 / 全部。
+> **注意**：非 Rev8 传感器（无 R/G/B 通道）默认只显示前 5 个面板（NEAR_IR/SIGNAL/REFLECTIVITY/RANGE/RGB）。按 `t` 键切换前 5 / 后 5 / 全部。
 
 ---
 
@@ -317,7 +317,7 @@ for lbl in lfv._model._panel_labels:
 | `CTRL+a` / `CTRL+d` | 面板 7 向前/向后切换 |
 | `CTRL+q` / `CTRL+e` | 面板 8 向前/向后切换 |
 | `CTRL+w` / `s` | 面板 9 向前/向后切换 |
-| `h` | 切换面板视图: 全部(0-9) → 前5(0-4) → 后5(5-9) |
+| `t` | 切换面板视图: 全部(0-9) → 前5(0-4) → 后5(5-9) |
 | `I` / `SHIFT+I` | 放大/缩小图像 |
 | `CTRL+I` | 切换图像视图模式 |
 

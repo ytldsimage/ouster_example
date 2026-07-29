@@ -565,7 +565,13 @@ class MixedLightMode(SimpleMode):
             return None
         nir = ls.field(core.ChanField.NEAR_IR).astype(np.float32)
         r, g, b = self._extract_rgb_channels(ls)
-        key_data = (r + g + b + nir) / 4.0
+        # Normalize each channel to [0,1] before mixing
+        # R/G/B range ~[0,46], NIR range ~[0,65535] — without normalization NIR dominates
+        r_n = (r - r.min()) / (r.max() - r.min() + 1e-6)
+        g_n = (g - g.min()) / (g.max() - g.min() + 1e-6)
+        b_n = (b - b.min()) / (b.max() - b.min() + 1e-6)
+        nir_n = nir / 65535.0
+        key_data = (r_n + g_n + b_n + nir_n) / 4.0
         if self._buc:
             self._buc.update(key_data)
         if self._ae:
@@ -605,7 +611,13 @@ class MixedLightSigMode(SimpleMode):
         nir = ls.field(core.ChanField.NEAR_IR).astype(np.float32)
         sig = ls.field(core.ChanField.SIGNAL).astype(np.float32)
         r, g, b = self._extract_rgb_channels(ls)
-        key_data = (r + g + b + nir + sig) / 5.0
+        # Normalize each channel to [0,1] before mixing
+        r_n = (r - r.min()) / (r.max() - r.min() + 1e-6)
+        g_n = (g - g.min()) / (g.max() - g.min() + 1e-6)
+        b_n = (b - b.min()) / (b.max() - b.min() + 1e-6)
+        nir_n = nir / 65535.0
+        sig_n = sig / 65535.0
+        key_data = (r_n + g_n + b_n + nir_n + sig_n) / 5.0
         if self._buc:
             self._buc.update(key_data)
         if self._ae:
