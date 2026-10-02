@@ -19,7 +19,7 @@ from .view_mode import (ImageMode, CloudMode, LidarFrameVizMode,
                         HDRRGBMode,
                         NormalsMode, RingMode, TimestampMode, MixedLightMode, MixedLightSigMode,
                         RedChannelMode, GreenChannelMode, BlueChannelMode,
-                        MixedLightCalRefMode,
+                        MixedLightCalRefMode, IMUWaveformMode, IMUCubeMode, IMUGaugeMode, IMUAccHeatmapMode, IMUGyroHeatmapMode,
                         is_norm_reflectivity_mode, CloudPaletteItem, SensorMode)
 from ouster.sdk._bindings.viz import (Cloud, Image, Label, PointViz, Mesh, Cuboid,
                    ObjectOverlay,
@@ -369,7 +369,7 @@ class SensorModel:
 
         self._palette_dirty = [True] * len(self._clouds)
 
-        self._num_images = 11
+        self._num_images = 13
         self._images: List[Image] = []
         self._image_modes: Dict[str, ImgModeItem] = {}
         for i in range(self._num_images):
@@ -401,6 +401,11 @@ class SensorModel:
         self._modes.append(GreenChannelMode(info=meta))
         self._modes.append(BlueChannelMode(info=meta))
         self._modes.append(MixedLightCalRefMode(info=meta))
+        self._modes.append(IMUWaveformMode(info=meta))
+        self._modes.append(IMUCubeMode(info=meta))
+        self._modes.append(IMUGaugeMode(info=meta))
+        self._modes.append(IMUAccHeatmapMode(info=meta))
+        self._modes.append(IMUGyroHeatmapMode(info=meta))
 
         # TODO[tws] decide whether it's necessary to provide extra modes via the constructor
         # self._modes.extend(_ext_modes or [])
@@ -1064,6 +1069,8 @@ class LidarFrameVizModel:
             "MIXED_LIGHT",           # panel 8
             "MIXED_LIGHT_SIG",           # panel 9
             "MIXED_LIGHT_CALREF",      # panel 10
+            "IMU_WAVEFORM",            # panel 11
+            "IMU_GAUGE",               # panel 12
         ]
         self._cloud_mode_name = sorted_cloud_mode_names[self._cloud_mode_ind]
         # Use ALL registered image modes (not just _known_fields filtered)

@@ -679,6 +679,405 @@ class MixedLightCalRefMode(SimpleMode):
                ls.has_field(core.ChanField.REFLECTIVITY)
 
 
+class IMUWaveformMode(ImageCloudMode):
+    """Oscilloscope-style rolling waveform of IMU accelerometer data."""
+    _history = None  # class-level deque, initialized lazily
+    _HISTORY_LEN = 128
+
+    def __init__(self, *, info: Optional[core.SensorInfo] = None) -> None:
+        self._info = info
+        if IMUWaveformMode._history is None:
+            from collections import deque
+            IMUWaveformMode._history = deque(maxlen=self._HISTORY_LEN)
+
+    @property
+    def name(self) -> str:
+        return "IMU_WAVEFORM"
+
+    @property
+    def names(self) -> List[str]:
+        return ["IMU_WAVEFORM"]
+
+    def _prepare_data(self,
+                      ls: core.LidarFrame,
+                      return_num: int = 0) -> Optional[np.ndarray]:
+        if not self.enabled(ls, return_num):
+            return None
+        acc = ls.field("IMU_ACC").astype(np.float32)  # (256, 3)
+        mean_xyz = acc.mean(axis=0)  # (3,)
+        self._history.append(mean_xyz)
+
+        H, W = 256, 2048
+        img = np.zeros((H, W), dtype=np.float32)
+
+        if len(self._history) < 2:
+            return img
+
+        data = np.array(self._history)  # (N, 3)
+        n = len(data)
+
+        # Auto-scale Y axis
+        y_min = data.min() - 0.5
+        y_max = data.max() + 0.5
+        if y_max - y_min < 0.01:
+            y_max = y_min + 1.0
+
+        intensities = [0.6, 0.7, 0.8]  # R, G, B channel intensities
+        for ch_idx, intensity in enumerate(intensities):
+            vals = data[:, ch_idx]
+            for i in range(n - 1):
+                x0 = int((n - 1 - i) * (W - 1) / max(n - 1, 1))  # newest=left
+                x1 = int((n - 2 - i) * (W - 1) / max(n - 1, 1))
+                y0 = int((vals[i] - y_min) / (y_max - y_min) * (H - 1))
+                y1 = int((vals[i + 1] - y_min) / (y_max - y_min) * (H - 1))
+                y0 = max(0, min(H - 1, y0))
+                y1 = max(0, min(H - 1, y1))
+                # Draw line segment with linear interpolation
+                steps = max(abs(x1 - x0), abs(y1 - y0)) + 1
+                for s in range(steps):
+                    t = s / max(steps - 1, 1)
+                    x = int(x0 + t * (x1 - x0))
+                    y = int(y0 + t * (y1 - y0))
+                    x = max(0, min(W - 1, x))
+                    y = max(0, min(H - 1, y))
+                    img[y, x] = intensity
+
+        # Draw center line (0 value)
+        y_center = int((0 - y_min) / (y_max - y_min) * (H - 1))
+        if 0 <= y_center < H:
+            img[y_center, :] = 0.15  # dim center line
+
+        return img
+
+    def set_image(self,
+                  img: Image,
+                  ls: core.LidarFrame,
+                  return_num: int = 0) -> None:
+        key_data = self._prepare_data(ls, return_num)
+        if key_data is not None:
+            img.set_image(key_data)
+
+    def set_cloud_color(self,
+                        cloud: Cloud,
+                        ls: core.LidarFrame,
+                        *,
+                        return_num: int = 0) -> None:
+        pass
+
+    def enabled(self, ls: core.LidarFrame, return_num: int = 0) -> bool:
+        return ls.has_field("IMU_ACC")
+
+
+class IMUCubeMode(ImageCloudMode):
+    """3D wireframe cube that rotates based on IMU accelerometer orientation."""
+
+    def __init__(self, *, info: Optional[core.SensorInfo] = None) -> None:
+        self._info = info
+
+    @property
+    def name(self) -> str:
+        return "IMU_CUBE"
+
+    @property
+    def names(self) -> List[str]:
+        return ["IMU_CUBE"]
+
+    def _prepare_data(self,
+                      ls: core.LidarFrame,
+                      return_num: int = 0) -> Optional[np.ndarray]:
+        if not self.enabled(ls, return_num):
+            return None
+        acc = ls.field("IMU_ACC").astype(np.float32)  # (256, 3)
+        mean_xyz = acc.mean(axis=0)  # (3,)
+
+        ax, ay, az = mean_xyz
+        # Compute pitch and roll from accelerometer
+        pitch = np.arctan2(ax, np.sqrt(ay * ay + az * az))
+        roll = np.arctan2(ay, az)
+
+        H, W = 256, 2048
+        img = np.zeros((H, W), dtype=np.float32)
+
+        # Define 8 vertices of a unit cube centered at origin
+        s = 0.8  # half-size
+        vertices = np.array([
+            [-s, -s, -s], [s, -s, -s], [s, s, -s], [-s, s, -s],
+            [-s, -s, s],  [s, -s, s],  [s, s, s],  [-s, s, s],
+        ], dtype=np.float32)
+
+        # Rotation matrices
+        cos_p, sin_p = np.cos(pitch), np.sin(pitch)
+        cos_r, sin_r = np.cos(roll), np.sin(roll)
+
+        # Rotate by pitch around Y axis, then roll around X axis
+        Ry = np.array([
+            [cos_p, 0, sin_p],
+            [0, 1, 0],
+            [-sin_p, 0, cos_p],
+        ], dtype=np.float32)
+        Rx = np.array([
+            [1, 0, 0],
+            [0, cos_r, -sin_r],
+            [0, sin_r, cos_r],
+        ], dtype=np.float32)
+
+        rot = Rx @ Ry
+        rotated = vertices @ rot.T  # (8, 3)
+
+        # Orthographic projection: map x,y to image coordinates, z for depth
+        # Scale and center
+        cx, cy = W // 2, H // 2
+        scale = min(H, W) * 0.3
+
+        px = (rotated[:, 0] * scale + cx).astype(int)
+        py = (-rotated[:, 1] * scale + cy).astype(int)  # flip y for image coords
+
+        # 12 edges of the cube
+        edges = [
+            (0, 1), (1, 2), (2, 3), (3, 0),  # front face
+            (4, 5), (5, 6), (6, 7), (7, 4),  # back face
+            (0, 4), (1, 5), (2, 6), (3, 7),  # connecting edges
+        ]
+
+        for i0, i1 in edges:
+            x0, y0 = px[i0], py[i0]
+            x1, y1 = px[i1], py[i1]
+            # Draw line with linear interpolation
+            steps = max(abs(x1 - x0), abs(y1 - y0)) + 1
+            for s_idx in range(steps):
+                t = s_idx / max(steps - 1, 1)
+                x = int(x0 + t * (x1 - x0))
+                y = int(y0 + t * (y1 - y0))
+                x = max(0, min(W - 1, x))
+                y = max(0, min(H - 1, y))
+                img[y, x] = 0.8
+
+            # Draw thicker lines (3px wide)
+            for offset in [-1, 1]:
+                for s_idx in range(steps):
+                    t = s_idx / max(steps - 1, 1)
+                    x = int(x0 + t * (x1 - x0))
+                    y = int(y0 + t * (y1 - y0)) + offset
+                    x = max(0, min(W - 1, x))
+                    y = max(0, min(H - 1, y))
+                    img[y, x] = 0.4
+
+        # Draw vertex dots
+        for i in range(8):
+            for dy in range(-2, 3):
+                for dx in range(-2, 3):
+                    yy = py[i] + dy
+                    xx = px[i] + dx
+                    if 0 <= yy < H and 0 <= xx < W:
+                        img[yy, xx] = 1.0
+
+        return img
+
+    def set_image(self,
+                  img: Image,
+                  ls: core.LidarFrame,
+                  return_num: int = 0) -> None:
+        key_data = self._prepare_data(ls, return_num)
+        if key_data is not None:
+            img.set_image(key_data)
+
+    def set_cloud_color(self,
+                        cloud: Cloud,
+                        ls: core.LidarFrame,
+                        *,
+                        return_num: int = 0) -> None:
+        pass
+
+    def enabled(self, ls: core.LidarFrame, return_num: int = 0) -> bool:
+        return ls.has_field("IMU_ACC")
+
+
+class IMUGaugeMode(ImageCloudMode):
+    """Horizontal bar gauge showing current X/Y/Z accelerometer values."""
+
+    def __init__(self, *, info: Optional[core.SensorInfo] = None) -> None:
+        self._info = info
+
+    @property
+    def name(self) -> str:
+        return "IMU_GAUGE"
+
+    @property
+    def names(self) -> List[str]:
+        return ["IMU_GAUGE"]
+
+    def _prepare_data(self,
+                      ls: core.LidarFrame,
+                      return_num: int = 0) -> Optional[np.ndarray]:
+        if not self.enabled(ls, return_num):
+            return None
+        acc = ls.field("IMU_ACC").astype(np.float32)  # (256, 3)
+        mean_xyz = acc.mean(axis=0)  # (3,)
+
+        H, W = 256, 2048
+        img = np.zeros((H, W), dtype=np.float32)
+
+        max_val = 20.0  # m/s², max display range
+        center_x = W // 2
+        intensities = [0.9, 0.7, 0.5]  # X=bright, Y=mid, Z=dim
+
+        # Draw center line
+        img[:, center_x] = 0.15
+
+        # Draw tick marks at ±1g intervals (9.81 m/s²)
+        g = 9.81
+        for mult in range(-2, 3):
+            tick_x = int(center_x + mult * g / max_val * (W // 2))
+            if 0 <= tick_x < W:
+                img[:, tick_x] = 0.08
+
+        # Draw 3 horizontal bars
+        bar_height = H // 6  # height of each bar
+        y_positions = [H // 6, H // 2, 5 * H // 6]  # top, middle, bottom
+
+        for ch_idx, (y_center, intensity) in enumerate(zip(y_positions, intensities)):
+            val = mean_xyz[ch_idx]
+            # Map value to pixel width
+            bar_len = int(abs(val) / max_val * (W // 2))
+            bar_len = min(bar_len, W // 2)
+
+            if val >= 0:
+                x_start = center_x
+                x_end = min(center_x + bar_len, W - 1)
+            else:
+                x_start = max(center_x - bar_len, 0)
+                x_end = center_x
+
+            y_top = max(y_center - bar_height // 2, 0)
+            y_bot = min(y_center + bar_height // 2, H - 1)
+
+            img[y_top:y_bot + 1, x_start:x_end + 1] = intensity
+
+        return img
+
+    def set_image(self,
+                  img: Image,
+                  ls: core.LidarFrame,
+                  return_num: int = 0) -> None:
+        key_data = self._prepare_data(ls, return_num)
+        if key_data is not None:
+            img.set_image(key_data)
+
+    def set_cloud_color(self,
+                        cloud: Cloud,
+                        ls: core.LidarFrame,
+                        *,
+                        return_num: int = 0) -> None:
+        pass
+
+    def enabled(self, ls: core.LidarFrame, return_num: int = 0) -> bool:
+        return ls.has_field("IMU_ACC")
+
+
+class IMUAccHeatmapMode(ImageCloudMode):
+    """IMU accelerometer data as a tiled heatmap image."""
+
+    def __init__(self, *, info: Optional[core.SensorInfo] = None) -> None:
+        self._info = info
+        self._ae = AutoExposure()
+
+    @property
+    def name(self) -> str:
+        return "IMU_ACC_HEATMAP"
+
+    @property
+    def names(self) -> List[str]:
+        return ["IMU_ACC_HEATMAP"]
+
+    def _prepare_data(self,
+                      ls: core.LidarFrame,
+                      return_num: int = 0) -> Optional[np.ndarray]:
+        if not self.enabled(ls, return_num):
+            return None
+        data = ls.field("IMU_ACC").astype(np.float32, copy=True)  # (256, 3)
+        target_w = self._info.w if self._info else 2048
+        reps = (target_w + data.shape[1] - 1) // data.shape[1]
+        tiled = np.tile(data, (1, reps))[:, :target_w]  # (256, 2048)
+        col_min = tiled.min(axis=0, keepdims=True)
+        col_max = tiled.max(axis=0, keepdims=True)
+        denom = col_max - col_min
+        denom[denom == 0] = 1.0
+        tiled = (tiled - col_min) / denom
+        if self._ae:
+            self._ae.update(tiled, update_state=(return_num == 0))
+        return tiled
+
+    def set_image(self,
+                  img: Image,
+                  ls: core.LidarFrame,
+                  return_num: int = 0) -> None:
+        key_data = self._prepare_data(ls, return_num)
+        if key_data is not None:
+            img.set_image(key_data)
+
+    def set_cloud_color(self,
+                        cloud: Cloud,
+                        ls: core.LidarFrame,
+                        *,
+                        return_num: int = 0) -> None:
+        pass
+
+    def enabled(self, ls: core.LidarFrame, return_num: int = 0) -> bool:
+        return ls.has_field("IMU_ACC")
+
+
+class IMUGyroHeatmapMode(ImageCloudMode):
+    """IMU gyroscope data as a tiled heatmap image."""
+
+    def __init__(self, *, info: Optional[core.SensorInfo] = None) -> None:
+        self._info = info
+        self._ae = AutoExposure()
+
+    @property
+    def name(self) -> str:
+        return "IMU_GYRO_HEATMAP"
+
+    @property
+    def names(self) -> List[str]:
+        return ["IMU_GYRO_HEATMAP"]
+
+    def _prepare_data(self,
+                      ls: core.LidarFrame,
+                      return_num: int = 0) -> Optional[np.ndarray]:
+        if not self.enabled(ls, return_num):
+            return None
+        data = ls.field("IMU_GYRO").astype(np.float32, copy=True)  # (256, 3)
+        target_w = self._info.w if self._info else 2048
+        reps = (target_w + data.shape[1] - 1) // data.shape[1]
+        tiled = np.tile(data, (1, reps))[:, :target_w]  # (256, 2048)
+        col_min = tiled.min(axis=0, keepdims=True)
+        col_max = tiled.max(axis=0, keepdims=True)
+        denom = col_max - col_min
+        denom[denom == 0] = 1.0
+        tiled = (tiled - col_min) / denom
+        if self._ae:
+            self._ae.update(tiled, update_state=(return_num == 0))
+        return tiled
+
+    def set_image(self,
+                  img: Image,
+                  ls: core.LidarFrame,
+                  return_num: int = 0) -> None:
+        key_data = self._prepare_data(ls, return_num)
+        if key_data is not None:
+            img.set_image(key_data)
+
+    def set_cloud_color(self,
+                        cloud: Cloud,
+                        ls: core.LidarFrame,
+                        *,
+                        return_num: int = 0) -> None:
+        pass
+
+    def enabled(self, ls: core.LidarFrame, return_num: int = 0) -> bool:
+        return ls.has_field("IMU_GYRO")
+
+
 class RGBChannelMode(SimpleMode):
     """Extract a single channel (R/G/B) from the RGB 3-channel composite field.
 
